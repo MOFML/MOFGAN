@@ -98,7 +98,7 @@ class GANMonitor:
                 print(f"SAVED MODEL STATES ({round(time.time() - save_start_time, 3)}s)")
 
         if self.epoch_batch_index % (self.train_config.sample_interval * 2) == 0:
-            print("Checking HC distribution...")
+            print("Checking HC distribution...")  # TODO: Parallelize this
             hc_check_start = time.time()
             hcs = []
             for j in range(1166):

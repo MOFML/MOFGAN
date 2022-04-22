@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import itertools
 import json
+import multiprocessing
 import os
 import pickle
 import random
 import time
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable, Tuple, NamedTuple
 
 import numpy
 import torch
@@ -49,30 +50,51 @@ def load_probability(path: Path, position_supercell_threshold: float, position_v
     return GridGenerator(32, position_variance).calculate(torch_coords, a, b, c, transformation_matrix)
 
 
-def iter_merged(shuffle: bool, position_supercell_threshold: float, position_variance: float) -> Iterable[Tuple[str, Tensor]]:
-    energy_grid_folder = Path('_data/outputs')
+class MOFDatasetMeta(NamedTuple):
+    position_supercell_threshold: float
+    position_variance: float
+
+
+class GridCalculationInput(NamedTuple):
+    cif: Path
+    meta: MOFDatasetMeta
+
+
+def calculate_grids(params: GridCalculationInput):
+    mof_name = params.cif.name[:-len('.cif')]
+
+    energy_grid_path = Path(f"_data/outputs/{mof_name}.output")
+    energy_grid_tensor = read_energy_grid(energy_grid_path)
+    probability_tensor = load_probability(params.cif, position_supercell_threshold=params.meta.position_supercell_threshold,
+                                          position_variance=params.meta.position_variance)
+
+    return mof_name, torch.cat([energy_grid_tensor, probability_tensor])
+
+
+def iter_merged(shuffle: bool, meta: MOFDatasetMeta) -> Iterable[Tuple[str, Tensor]]:
     paths = [path for path in Path('_data/structure_11660').iterdir()]
     if shuffle:
         random.shuffle(paths)
 
-    for cif in paths:
-        mof_name = cif.name[:-len('.cif')]
+    # for cif in paths:
+    #     mof_name = cif.name[:-len('.cif')]
+    #     yield mof_name, calculate_grids(mof_name)
 
-        energy_grid_path = energy_grid_folder / f"{mof_name}.output"
-        energy_grid_tensor = read_energy_grid(energy_grid_path)
-        probability_tensor = load_probability(cif, position_supercell_threshold=position_supercell_threshold,
-                                              position_variance=position_variance)
+    start = time.time()
+    with multiprocessing.Pool(30) as pool:
+        function_inputs = [GridCalculationInput(path, meta) for path in paths]
 
-        yield mof_name, torch.cat([energy_grid_tensor, probability_tensor])
+        for i, (mof_name, tensor) in enumerate(pool.imap(calculate_grids, function_inputs)):
+            print(f"Processed: {mof_name}  [avg time: {round((time.time() - start) / (i + 1), 2)}s]")
+            yield mof_name, tensor
 
 
 def generate_combined_dataset(position_supercell_threshold: float, position_variance: float, shuffle: bool,
                               limit: int = None) -> MOFDataset:
     mofs: Dict[str] = {}
 
-    sample_generator = iter_merged(shuffle=shuffle,
-                                   position_supercell_threshold=position_supercell_threshold,
-                                   position_variance=position_variance)
+    dataset_meta = MOFDatasetMeta(position_supercell_threshold=position_supercell_threshold, position_variance=position_variance)
+    sample_generator = iter_merged(shuffle=shuffle, meta=dataset_meta)
 
     if limit is not None:
         sample_generator = itertools.islice(sample_generator, limit)

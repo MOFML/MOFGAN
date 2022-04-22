@@ -31,23 +31,23 @@ save_path = config.local.sample_save_path
 
 def main():
     if mode == Mode.GENERATED:
-        with utils.sftp_connection() as sftp:
-            byte_data: bytes = sftp.download_bytes(f'_training/EnergyPosition-{training_instance}/images/{image}')
-            data: Tensor = pickle.loads(byte_data)
-            print(data.shape)
-
-            with open(save_path, 'w+') as f:
-                json.dump(data.tolist()[-16:], f, indent='\t')
-            print(f"SAVED TO {save_path}")
+        download_samples(f'_training/EnergyPosition-{training_instance}/images/{image}')
     elif mode == Mode.REAL_MOF:
-        with utils.sftp_connection() as sftp:
-            byte_data: bytes = sftp.download_bytes(f'real_sample.p')
-            data: Tensor = pickle.loads(byte_data)
-            print(data.shape)
+        download_samples(f'real_sample.p')
+    # elif mode == Mode.REAL_MOF_LOCAL:
+    # elif mode == Mode.REAL_MOF_REMOTE_SAMPLE:
 
-            with open(save_path, 'w+') as f:
-                json.dump(data.tolist()[-16:], f, indent='\t')
-            print(f"SAVED TO {save_path}")
+
+def download_samples(remote_path: str, sample_count: int = 16):
+    print(f"Downloading {sample_count} samples from: {remote_path}")
+    with utils.sftp_connection() as sftp:
+        byte_data: bytes = sftp.download_bytes(remote_path)
+        data: Tensor = pickle.loads(byte_data)
+        print(f"Sample shape: {data.shape}")
+
+        with open(save_path, 'w+') as f:
+            json.dump(data.tolist()[-16:], f, indent='\t')
+        print(f"SAVED TO {save_path}")
 
 
 if __name__ == '__main__':
