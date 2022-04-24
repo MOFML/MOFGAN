@@ -1,3 +1,4 @@
+import multiprocessing
 from io import BytesIO
 from pathlib import Path
 from typing import Union
@@ -41,3 +42,11 @@ def sftp_connection() -> SFTPConnection:
                                             username=config.sftp.user,
                                             private_key=config.sftp.key,
                                             cnopts=pysftp.CnOpts()))
+
+
+def get_available_threads():
+    return {
+        8:  4,
+        16: 8,
+        40: 32,
+    }.get(multiprocessing.cpu_count(), 1)

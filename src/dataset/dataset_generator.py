@@ -9,6 +9,8 @@ from typing import List
 import requests
 from tqdm import tqdm
 
+from util import utils
+
 core_file_name: str = "2019-07-01-ASR-public_12020.tar"
 core_download_url: str = f"https://zenodo.org/record/3370144/files/{core_file_name}?download=1"
 core_file_size: int = 263168000  # Bytes
@@ -104,7 +106,7 @@ def generate_energy_grids():
         print("Input file count mismatch!")
         exit(1)
 
-    process_count = {16: 8, 8: 4, 40: 32}.get(multiprocessing.cpu_count(), 1)
+    process_count = utils.get_available_threads()
 
     print(f"Generating energy grids with {process_count} threads...")
     start = time.time()

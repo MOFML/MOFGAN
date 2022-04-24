@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import itertools
 import json
 import multiprocessing
 import os
@@ -8,7 +7,7 @@ import pickle
 import random
 import time
 from pathlib import Path
-from typing import Dict, Iterable, Tuple, NamedTuple
+from typing import Dict, NamedTuple
 
 import numpy
 import torch
@@ -17,17 +16,18 @@ from torch import Tensor
 
 from domain.grid_generator import calculate_supercell_coords, GridGenerator
 from mof_dataset import MOFDataset
+from util import utils
+
+GRID_SIZE = 32
 
 
 def read_energy_grid(path: Path) -> Tensor:
-    grid_size = 32
-
-    result = torch.zeros([grid_size, grid_size, grid_size])
+    result = torch.zeros([GRID_SIZE, GRID_SIZE, GRID_SIZE])
 
     with path.open() as f:
-        for x in range(grid_size):
-            for y in range(grid_size):
-                for z in range(grid_size):
+        for x in range(GRID_SIZE):
+            for y in range(GRID_SIZE):
+                for z in range(GRID_SIZE):
                     line = f.readline()
                     result[x][y][z] = float(line.split()[-1])
 
@@ -47,7 +47,7 @@ def load_probability(path: Path, position_supercell_threshold: float, position_v
     weights = numpy.ones((len(super_cell_coords), 1))
     super_cell_coords = numpy.hstack((weights, super_cell_coords))
     torch_coords = torch.from_numpy(super_cell_coords).float()
-    return GridGenerator(32, position_variance).calculate(torch_coords, a, b, c, transformation_matrix)
+    return GridGenerator(GRID_SIZE, position_variance).calculate(torch_coords, a, b, c, transformation_matrix)
 
 
 class MOFDatasetMeta(NamedTuple):
@@ -55,12 +55,12 @@ class MOFDatasetMeta(NamedTuple):
     position_variance: float
 
 
-class GridCalculationInput(NamedTuple):
+class GridCalculationRequest(NamedTuple):
     cif: Path
     meta: MOFDatasetMeta
 
 
-def calculate_grids(params: GridCalculationInput):
+def calculate_grids(params: GridCalculationRequest):
     mof_name = params.cif.name[:-len('.cif')]
 
     energy_grid_path = Path(f"_data/outputs/{mof_name}.output")
@@ -71,37 +71,26 @@ def calculate_grids(params: GridCalculationInput):
     return mof_name, torch.cat([energy_grid_tensor, probability_tensor])
 
 
-def iter_merged(shuffle: bool, meta: MOFDatasetMeta) -> Iterable[Tuple[str, Tensor]]:
-    paths = [path for path in Path('_data/structure_11660').iterdir()]
-    if shuffle:
-        random.shuffle(paths)
-
-    # for cif in paths:
-    #     mof_name = cif.name[:-len('.cif')]
-    #     yield mof_name, calculate_grids(mof_name)
-
-    start = time.time()
-    with multiprocessing.Pool(30) as pool:
-        function_inputs = [GridCalculationInput(path, meta) for path in paths]
-
-        for i, (mof_name, tensor) in enumerate(pool.imap(calculate_grids, function_inputs)):
-            print(f"Processed: {mof_name}  [avg time: {round((time.time() - start) / (i + 1), 2)}s]")
-            yield mof_name, tensor
-
-
 def generate_combined_dataset(position_supercell_threshold: float, position_variance: float, shuffle: bool,
                               limit: int = None) -> MOFDataset:
     mofs: Dict[str] = {}
-
     dataset_meta = MOFDatasetMeta(position_supercell_threshold=position_supercell_threshold, position_variance=position_variance)
-    sample_generator = iter_merged(shuffle=shuffle, meta=dataset_meta)
 
-    if limit is not None:
-        sample_generator = itertools.islice(sample_generator, limit)
+    paths = [path for path in Path('_data/structure_11660').iterdir()]
+    if shuffle:
+        random.shuffle(paths)
+    if limit:
+        paths = paths[:limit]
 
-    for i, (mof_name, merged) in enumerate(sample_generator):
-        print((i + 1), mof_name, merged.shape)
-        mofs[mof_name] = [merged]
+    function_inputs = [GridCalculationRequest(path, dataset_meta) for path in paths]
+
+    process_count = utils.get_available_threads()
+
+    start = time.time()
+    with multiprocessing.Pool(process_count) as pool:
+        for i, (mof_name, tensor) in enumerate(pool.imap(calculate_grids, function_inputs)):
+            print(f"Processed {i + 1}) {mof_name} {tensor.shape}  [avg time: {round((time.time() - start) / (i + 1), 2)}s]")
+            mofs[mof_name] = [tensor]
 
     return MOFDataset(position_supercell_threshold=position_supercell_threshold, position_variance=position_variance, mofs=mofs)
 
@@ -132,9 +121,19 @@ def update_dataset():
     print(f"LOAD TIME: {round(time.time() - start, 2)}s")
 
 
-def generate_final():
+def generate_final(save_path: str):
     dataset = generate_combined_dataset(position_supercell_threshold=0.5, position_variance=0.2, shuffle=False)
-    dataset.save('mof_dataset.pt')
+    dataset.save(save_path)
+
+
+def generate_sample(save_path: str, count: int):
+    sample_dataset = generate_combined_dataset(position_supercell_threshold=0.5, position_variance=0.2, shuffle=True, limit=count)
+    print(sample_dataset.mofs[0].shape)
+    tensor = torch.stack(sample_dataset.mofs)
+    print(f"Saving to: {save_path}")
+    with open(save_path, 'wb+') as f:
+        pickle.dump(tensor, f)
+    print("DONE!")
 
 
 def test():
@@ -144,30 +143,28 @@ def test():
     # print(stacked.shape)
     # print(len(list(stacked)))
     # print(list(stacked)[0].shape)
-    # Cool: KEGZOL_clean
-    # Bad: QUSCAJ_clean, VOBRUB
 
     # dataset = MOFDataset.load('mof_dataset_test.pt')
     # augmented_dataset = dataset.augment_rotations()
     # print(len(augmented_dataset))
     # augmented_dataset.save('mof_dataset_test_rotate.pt')
-    sample_dataset = generate_combined_dataset(position_supercell_threshold=0.5, position_variance=0.2, shuffle=True, limit=8)
-    print(sample_dataset.mofs[0].shape)
-    tensor = torch.stack(sample_dataset.mofs)
-    path = 'real_sample.p'
-    print(f"Saving to {path}... ", end="")
-    with open(path, 'wb+') as f:
-        pickle.dump(tensor, f)
-    print("DONE!")
-
     # dataset.save(path)
+    pass
 
 
 def main():
+    # Interesting MOFs:
+    # - KEGZOL_clean
+    # - QUSCAJ_clean
+    # - VOBRUB
+    # - RAVXAP_clean
+    # - HIFTOG01_clean
+
     # update_dataset()
     # sample()
     start = time.time()
-    generate_final()
+    generate_final('mof_dataset.pt')
+    # generate_sample('real_mof_sample.p', 32)
     print(f"TIME: {round(time.time() - start, 2)}s")
 
 
