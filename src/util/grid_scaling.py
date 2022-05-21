@@ -6,17 +6,15 @@ from torch.nn import functional
 import torch.nn.functional
 
 
-class ScaleUtil:
+def resize_2d(t: Tensor, size: Union[int, Tuple[int, int, int]]) -> Tensor:
+    t = t.unsqueeze(0).unsqueeze(0)  # Input format is Batch x Channels x Dims
+    return functional.interpolate(t, size=size, mode='bilinear', align_corners=False)[0][0]
 
-    @staticmethod
-    def resize_2d(t: Tensor, size: Union[int, Tuple[int, int, int]]) -> Tensor:
-        t = t.unsqueeze(0).unsqueeze(0)  # Input format is Batch x Channels x Dims
-        return functional.interpolate(t, size=size, mode='bilinear', align_corners=False)[0][0]
 
-    @staticmethod
-    def resize_3d(t: Tensor, size: Union[int, Tuple[int, int, int]]) -> Tensor:
-        t = t.unsqueeze(0).unsqueeze(0)  # Input format is Batch x Channels x Dims
-        return functional.interpolate(t, size=size, mode='trilinear', align_corners=False)[0][0]
+def resize_3d(t: Tensor, size: Union[int, Tuple[int, int, int]]) -> Tensor:
+    t = t.unsqueeze(0).unsqueeze(0)  # Input format is Batch x Channels x Dims
+    return functional.interpolate(t, size=size, mode='trilinear', align_corners=False)[0][0]
+    # return functional.interpolate(t, size=size, mode='tricubic')[0][0]
 
 
 def main():
@@ -40,7 +38,7 @@ def main():
 
     t = t2 if True else t3
     print("BEFORE:", t.shape)
-    result = ScaleUtil.resize_2d(t, 5)
+    result = resize_2d(t, 5)
     print(result)
     print("AFTER:", result.shape)
 

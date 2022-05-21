@@ -17,19 +17,24 @@ def experimental_transform_function(mofs: Tensor) -> Tensor:
 
     print("Original Data:")
     print(f"\tEnergy Bounds: {get_bounds(energy_grids)}")
-    print(f"\tPosition Bounds: {get_bounds(position_grids)} ")
+    print(f"\tPosition Bounds: {get_bounds(position_grids)}")
 
     energy_grids = transformations.scale_log(energy_grids)
     # position_grids = 8 * position_grids
-    position_grids = np.exp(position_grids) / 7
+    # position_grids = np.exp(position_grids) / 7
+
+    # print("PG MEAN:", position_grids.mean())
+
+    energy_grids = transformations.standardize(energy_grids)
+    # position_grids = transformations.standardize(position_grids)
 
     print("Post Numeric Transformation Bounds:")
     print(f"\tEnergy: {get_bounds(energy_grids)}")
     print(f"\tPositions: {get_bounds(position_grids)}")
 
-    energy_grids = torch.from_numpy(np.interp(energy_grids, [-9, 42], [0, 1])).float()
+    # energy_grids = torch.from_numpy(np.interp(energy_grids, [-9, 42], [0, 1])).float()
     # position_grids = torch.from_numpy(np.interp(position_grids, [0, 7.5], [0, 1])).float()
-    position_grids = torch.from_numpy(np.interp(position_grids, [0, 42], [0, 1])).float()
+    # position_grids = torch.from_numpy(np.interp(position_grids, [0, 42], [0, 1])).float()
 
     print("\n----- FINAL -----")
     for name, channel in {"Energy": energy_grids, "Positions": position_grids}.items():

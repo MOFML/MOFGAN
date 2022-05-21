@@ -44,13 +44,13 @@ class GANMonitor:
         self.enable_wandb = enable_wandb
         self.real_hcs: List[float] = []
 
-        batch_iterator = iter(data_loader)
-        for i in range(2):  # Batches to sample
-            batch: Tensor = next(batch_iterator)
-            sample_batch_path = (training_config.root_folder / f'real_sample_{i}.p')
-            with sample_batch_path.open('wb+') as f:
-                print(f"Saving real sample batch: {sample_batch_path}")
-                pickle.dump(batch.cpu(), f)
+        # batch_iterator = iter(data_loader)
+        # for i in range(2):  # Batches to sample
+        #     batch: Tensor = next(batch_iterator)
+        #     sample_batch_path = (training_config.root_folder / f'real_sample_{i}.p')
+        #     with sample_batch_path.open('wb+') as f:
+        #         print(f"Saving real sample batch: {sample_batch_path}")
+        #         pickle.dump(batch.cpu(), f)
 
         self.epoch = 0
         self.global_batch_index = 0
@@ -71,7 +71,6 @@ class GANMonitor:
 
         if self.previous_real_pred is not None:
             real_only_emd = abs(real_pred.mean() - self.previous_real_pred.mean()).item()
-            print(f"REAL ONLY EMD: {real_only_emd}")
         else:
             real_only_emd = None
         self.previous_real_pred = real_pred
@@ -83,7 +82,6 @@ class GANMonitor:
         # NOTE: Garbage EMD should theoretically be very high relative to generated/real,
         # but we're not training to maximize that, only between generated, so I guess it makes sense?
         real_garbage_emd = abs(garbage_pred.mean() - real_pred.mean()).item()
-        print("GARBAGE/REAL EMD:", real_garbage_emd)
 
         if self.enable_wandb and self.train_both_count % 5 == 0:
             wandb.log({"Negative Critic Loss": -d_loss, "Generator Loss": g_loss,
@@ -95,7 +93,9 @@ class GANMonitor:
               + f"[Batch {self.epoch_batch_index}/{self.batches_per_epoch}] ".ljust(14)
               + f"[-C Loss: {'{:.4f}'.format(-d_loss).rjust(11)}] "
               + f"[G Loss: {'{:.4f}'.format(g_loss).rjust(11)}] "
-              + f"[Wasserstein Distance: {round(real_generated_emd, 3)}]")
+              + f"[Wasserstein Distance: {round(real_generated_emd, 3)}] "
+              + f"[Garbage/Real EMD: {round(real_garbage_emd, 3)}] "
+              + f"[Real Only EMD: {round(real_only_emd, 3) if real_only_emd else 'N/A'}]".ljust(14))
         self.train_both_count += 1
 
     def on_iteration_complete(self, generated_images: Tensor):
@@ -121,64 +121,64 @@ class GANMonitor:
                 print(f"SAVED MODEL STATES ({round(time.time() - save_start_time, 3)}s)")
 
         # if self.enable_wandb and self.epoch_batch_index % (self.train_config.sample_interval * 2) == 0:
-        if self.epoch_batch_index % (self.train_config.sample_interval * 2) == 0:
-            print("Checking HC distribution...")
-
-            # self.real_hcs = [1, 2, 3]
-            transform_code: str = inspect.getsource(self.dataset_transformer)
-            real_hc_cache_key = ['real_hcs', transform_code]
-            self.real_hcs = cache.get(real_hc_cache_key)
-
-            if not self.real_hcs:
-                print("Loading full real MOF dataset...")
-                full_dataset = MOFDataset.load(training_config.datasets[DatasetType.FULL])
-                print("Transforming full dataset")
-                full_dataset.transform_(self.dataset_transformer)  # Need to compare to real HCs under same energy grid transformation
-
-                print("Computing real henry constants...")
-                start = time.time()
-                self.real_hcs = [mof_properties.get_henry_constant(mof[0]) for mof in full_dataset.mofs]
-                print(f"DONE: {round(time.time() - start, 2)}s")
-
-                print("Saving...")
-                cache.store(real_hc_cache_key, self.real_hcs)
-                transform_code_hash: str = hashlib.sha1(transform_code.encode('utf-8')).hexdigest()
-                with (training_config.root_folder / f"real_transformed_hcs-{transform_code_hash}.txt").open('w+') as f:
-                    f.write("\n".join(str(x) for x in self.real_hcs))  # Save real HC distribution
-
-            generator_clone = self.generator.__class__()
-            generator_clone.load_state_dict(copy.deepcopy(self.generator.state_dict()))
-            # generator_clone.cpu()
-            with ray.util.multiprocessing.Pool(35) as pool:
-                def generate_sample_hcs(latent_vector: Tensor):
-                    sample_hcs = []
-                    for hc_sample_mof in generator_clone(latent_vector):
-                        sample_hcs.append(mof_properties.get_henry_constant(hc_sample_mof[0]))
-                    return sample_hcs
-
-                print("Computing current generated HC distribution")
-                hc_check_start = time.time()
-                request = [self.latent_vector_generator(110, True) for _ in range(106)]  # Same size as real = 11660
-                hc_samples = list(tqdm(pool.imap(generate_sample_hcs, request),
-                                       total=len(request), ncols=80, unit='batches'))
-                hc_samples = [x for sample in hc_samples for x in sample]
-                print(f"DONE: {round(time.time() - hc_check_start, 2)}s")
-            # for j in range(1166):
-            # for hc_sample_mof in generator_clone(self.latent_vector_generator(10)):  # .cpu()
-            #     hcs.append(mof_properties.get_henry_constant(hc_sample_mof[0]))
-
-            hc_result_path = training_config.metrics_folder / save_id / "henry_constant.txt"
-            hc_result_path.parent.mkdir(parents=True, exist_ok=True)
-            with hc_result_path.open('w+') as f:
-                f.write("\n".join(str(x) for x in hc_samples))
-
-            hc_emd = mof_stats.scale_invariant_emd(hc_samples, self.real_hcs)
-
-            if self.enable_wandb:
-                wandb.log({"HC Distribution EMD": hc_emd})
-            else:
-                print(f"HC Distribution EMD: {hc_emd}")
-            print(f"HC Check Time: {time.time() - hc_check_start}s")
+        # if self.epoch_batch_index % (self.train_config.sample_interval * 2) == 0:
+        #     print("Checking HC distribution...")
+        #
+        #     # self.real_hcs = [1, 2, 3]
+        #     transform_code: str = inspect.getsource(self.dataset_transformer)
+        #     real_hc_cache_key = ['real_hcs', transform_code]
+        #     self.real_hcs = cache.get(real_hc_cache_key)
+        #
+        #     if not self.real_hcs:
+        #         print("Loading full real MOF dataset...")
+        #         full_dataset = MOFDataset.load(training_config.datasets[DatasetType.FULL])
+        #         print("Transforming full dataset")
+        #         full_dataset.transform_(self.dataset_transformer)  # Need to compare to real HCs under same energy grid transformation
+        #
+        #         print("Computing real henry constants...")
+        #         start = time.time()
+        #         self.real_hcs = [mof_properties.get_henry_constant(mof[0]) for mof in full_dataset.mofs]
+        #         print(f"DONE: {round(time.time() - start, 2)}s")
+        #
+        #         print("Saving...")
+        #         cache.store(real_hc_cache_key, self.real_hcs)
+        #         transform_code_hash: str = hashlib.sha1(transform_code.encode('utf-8')).hexdigest()
+        #         with (training_config.root_folder / f"real_transformed_hcs-{transform_code_hash}.txt").open('w+') as f:
+        #             f.write("\n".join(str(x) for x in self.real_hcs))  # Save real HC distribution
+        #
+        #     generator_clone = self.generator.__class__()
+        #     generator_clone.load_state_dict(copy.deepcopy(self.generator.state_dict()))
+        #     # generator_clone.cpu()
+        #     with ray.util.multiprocessing.Pool(35) as pool:
+        #         def generate_sample_hcs(latent_vector: Tensor):
+        #             sample_hcs = []
+        #             for hc_sample_mof in generator_clone(latent_vector):
+        #                 sample_hcs.append(mof_properties.get_henry_constant(hc_sample_mof[0]))
+        #             return sample_hcs
+        #
+        #         print("Computing current generated HC distribution")
+        #         hc_check_start = time.time()
+        #         request = [self.latent_vector_generator(110, True) for _ in range(106)]  # Same size as real = 11660
+        #         hc_samples = list(tqdm(pool.imap(generate_sample_hcs, request),
+        #                                total=len(request), ncols=80, unit='batches'))
+        #         hc_samples = [x for sample in hc_samples for x in sample]
+        #         print(f"DONE: {round(time.time() - hc_check_start, 2)}s")
+        #     # for j in range(1166):
+        #     # for hc_sample_mof in generator_clone(self.latent_vector_generator(10)):  # .cpu()
+        #     #     hcs.append(mof_properties.get_henry_constant(hc_sample_mof[0]))
+        #
+        #     hc_result_path = training_config.metrics_folder / save_id / "henry_constant.txt"
+        #     hc_result_path.parent.mkdir(parents=True, exist_ok=True)
+        #     with hc_result_path.open('w+') as f:
+        #         f.write("\n".join(str(x) for x in hc_samples))
+        #
+        #     hc_emd = mof_stats.scale_invariant_emd(hc_samples, self.real_hcs)
+        #
+        #     if self.enable_wandb:
+        #         wandb.log({"HC Distribution EMD": hc_emd})
+        #     else:
+        #         print(f"HC Distribution EMD: {hc_emd}")
+        #     print(f"HC Check Time: {round(time.time() - hc_check_start, 1)}s")
 
 
 def filter_source_code(source_code: str):

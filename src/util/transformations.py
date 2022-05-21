@@ -1,4 +1,10 @@
 import numpy as np
+import torch
+from torch import Tensor
+
+
+def standardize(data: Tensor):
+    return (data - torch.mean(data)) / torch.std(data)
 
 
 def scale_log(k):

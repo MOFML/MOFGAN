@@ -20,14 +20,16 @@ metrics_folder = root_folder / "metrics"
 
 
 class TrainingConfig(NamedTuple):
-    epochs: int = 100
-    latent_dim: int = 1024  # Dimensionality of the latent space
+    epochs: int = 200
+    latent_dim: int = 2048  # Dimensionality of the latent space
     generator_train_interval: int = 5  # number of training steps for discriminator per iteration
     sample_interval: int = 100
-    batch_size: int = 32
+    batch_size: int = 16
 
-    critic_learning_rate: float = 0.0001
-    generator_learning_rate: float = 0.0001
+    critic_learning_rate: float = 0.0004
+    generator_learning_rate: float = 0.0004
+    # critic_learning_rate: float = 0.0001
+    # generator_learning_rate: float = 0.0001
     lambda_gp: int = 10  # Loss weight for gradient penalty
     adam_b1: float = 0.5
     adam_b2: float = 0.9  # or 0.999

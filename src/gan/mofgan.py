@@ -7,15 +7,17 @@ import torch.autograd as autograd
 import torch.nn as nn
 import wandb
 from torch import Tensor
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 import project_config
+import util
 from dataset.mof_dataset import MOFDataset
 from gan import training_config, gan_monitor
 from gan.gan_logger import GANLogger
 from gan.gan_monitor import GANMonitor
 from gan.training_config import TrainingConfig, DatasetType
-from util import transformations
+from testing.test_dataset import TestDataset
+from util import transformations, utils
 
 config = TrainingConfig()
 GANLogger.log(config)
@@ -32,9 +34,9 @@ class Generator(nn.Module):
     def __init__(self):
         super(Generator, self).__init__()
 
-        kernel_size = (4, 4, 4)
-        stride = (2, 2, 2)
-        padding = (1, 1, 1)
+        kernel_size = 4
+        stride = 2
+        padding = 1
 
         self.g_latent_to_features = nn.Sequential(
             nn.Linear(config.latent_dim, 8 * grid_size * channels * 2 * 2 * 2),
@@ -45,19 +47,22 @@ class Generator(nn.Module):
         self.g_features_to_image = nn.Sequential(
             nn.ConvTranspose3d(channels * grid_size * 8, grid_size * 4, kernel_size, stride, padding),
             nn.BatchNorm3d(grid_size * 4),
+            # nn.ReLU(),
             nn.SiLU(),  # Swish
 
             nn.ConvTranspose3d(grid_size * 4, grid_size * 2, kernel_size, stride, padding),
             nn.BatchNorm3d(grid_size * 2),
+            # nn.ReLU(),
             nn.SiLU(),
 
             nn.ConvTranspose3d(grid_size * 2, grid_size, kernel_size, stride, padding),
             nn.BatchNorm3d(grid_size),
+            # nn.ReLU(),
             nn.SiLU(),
 
             nn.ConvTranspose3d(grid_size, channels, kernel_size, stride, padding),
-            nn.SiLU(),
-            # nn.Sigmoid(),
+            # nn.Tanh(),
+            # nn.Sigmoid(),  # nn.SiLU(),
         )
 
     def forward(self, z):
@@ -75,7 +80,6 @@ class Discriminator(nn.Module):
 
         kernel = (5, 5, 5)
         stride = (2, 2, 2)
-        # padding = (padding_amount, padding_amount, padding_amount)
         padding = 2
 
         # For different paddings: Final flattened size is [256, 2048, 16384, 55296, 131072, 256000, 442368, 702464] (K=5, S=2)
@@ -187,8 +191,11 @@ def data_transform_function(mofs: Tensor) -> Tensor:
     print(f"\tEnergy: {get_bounds(energy_grids)}")
     print(f"\tPositions: {get_bounds(position_grids)}")
 
-    energy_grids = torch.from_numpy(np.interp(energy_grids, [-9, 42], [0, 1])).float()
-    position_grids = torch.from_numpy(np.interp(position_grids, [0, 7.5], [0, 1])).float()
+    energy_grids = transformations.standardize(energy_grids)
+    # position_grids = transformations.standardize(position_grids)
+
+    # energy_grids = torch.from_numpy(np.interp(energy_grids, [-9, 42], [-1, 1])).float()
+    # position_grids = torch.from_numpy(np.interp(position_grids, [0, 7.5], [-1, 1])).float()
 
     # energy_grids = torch.from_numpy(np.interp(energy_grids, [-2.3, 3.7], [-1, 1])).float()
     # position_grids = torch.from_numpy(np.interp(position_grids, [0, 7.5], [-1, 1])).float()
@@ -238,12 +245,18 @@ def train():
     GANLogger.init(title, training_config.root_folder)
 
     print("Loading dataset...")
-    dataset = MOFDataset.load(dataset_path)
-    dataset.transform_(data_transform_function)
-    if dataset_type == DatasetType.TRAIN:
-        dataset = dataset.augment_rotations()
 
-    print("LOAD TIME:", (time.time() - start))
+    # dataset = MOFDataset.load(dataset_path)
+    # dataset.transform_(data_transform_function)
+    # if dataset_type == DatasetType.TRAIN:
+    #     dataset = dataset.augment_rotations()
+
+    dataset = TestDataset.load('test_sphere_cube_dataset.pt')
+    print("LOADED:", dataset.data.shape)
+
+    data_loader = DataLoader(dataset=dataset, batch_size=config.batch_size, shuffle=True)
+
+    print(f"LOAD TIME: {round((time.time() - start), 2)}s")
     transform_code: str = inspect.getsource(data_transform_function)
     GANLogger.log("Transform Function:", console=False)
     GANLogger.log(*["\t" + line for line in transform_code.splitlines()], console=False)
@@ -266,9 +279,6 @@ def train():
 
     if enable_wandb:
         wandb_meta = dict(config._asdict())
-        # wandb_meta['~critic_model'] = str(critic)
-        # wandb_meta['~generator_model'] = str(generator)
-        # wandb_meta['~data_transformer'] = transform_code
 
         wandb.init(project=training_config.model_name, name=f"{training_config.instance_name}-{int(time.time() * 1000)}",
                    entity=project_config.wandb.user, config=wandb_meta)
@@ -277,9 +287,7 @@ def train():
         wandb.termlog(str(critic))
         wandb.termlog(gan_monitor.filter_source_code(transform_code))
 
-        wandb.watch(models=[generator, critic], log_freq=200)
-
-    data_loader = DataLoader(dataset=dataset, batch_size=config.batch_size, shuffle=True)
+        wandb.watch(models=[generator, critic], log_freq=400)
 
     monitor = GANMonitor(train_config=config, image_shape=image_shape,
                          latent_vector_generator=generate_random_latent_vector,
@@ -349,7 +357,9 @@ def train():
 #     p.data.clamp_(-clip_value, clip_value)
 
 if __name__ == '__main__':
-    # TODO: Hyperparameter optimization. Latent: [16, 64, 256, 1024], Batch Size: [16, 64, 256], Epochs = 10.
+    # TODO:
+    #  Try Tanh in generator output with E = [-1, 1] and P = [0, 1] (or P also = [-1, 1])
+    #  Hyperparameter optimization. Latent: [16, 64, 256, 1024], Batch Size: [16, 64, 256], Epochs = 10.
     #  Adam B2, LR, Kernel Size, Padding, Dropout Rate, Weight Initialization
 
     train()

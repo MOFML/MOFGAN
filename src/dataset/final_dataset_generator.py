@@ -185,16 +185,6 @@ def generate_grids(mof_names: List[str], meta: MOFDatasetMeta):
 #     augmented_dataset.save(save_path)
 
 
-def _test():
-    # t1 = torch.zeros([2, 4, 3])
-    # t2 = torch.zeros([2, 4, 3])
-    # stacked = torch.stack((t1, t2, t2, t2))
-    # print(stacked.shape)
-    # print(len(list(stacked)))
-    # print(list(stacked)[0].shape)
-    pass
-
-
 def check_atom_types():
     total_counts: Counter[Element] = Counter()
     # Organic: CHONP
@@ -221,6 +211,30 @@ def check_atom_types():
     print(sorted(result.items(), key=lambda e: e[1], reverse=True))
 
 
+def _test():
+    # t1 = torch.zeros([2, 4, 3])
+    # t2 = torch.zeros([2, 4, 3])
+    # stacked = torch.stack((t1, t2, t2, t2))
+    # print(stacked.shape)
+    # print(len(list(stacked)))
+    # print(list(stacked)[0].shape)
+
+    parser = CifParser(str(path))
+    structures = parser.get_structures(primitive=False)
+    assert len(structures) == 1
+    structure = structures[0]
+    lattice = structure.lattice
+    transformation_matrix = lattice.matrix.copy()
+    a, b, c = lattice.abc
+    unit_cell_coords = structure.frac_coords
+    super_cell_coords = calculate_supercell_coords(unit_cell_coords, threshold=position_supercell_threshold)
+    weights = numpy.ones((len(super_cell_coords), 1))
+    super_cell_coords = numpy.hstack((weights, super_cell_coords))
+    torch_coords = torch.from_numpy(super_cell_coords).float()
+    return GridGenerator(GRID_SIZE, position_variance).calculate(torch_coords, a, b, c, transformation_matrix)
+    pass
+
+
 def main():
     # Interesting MOFs:
     # - KEGZOL_clean
@@ -234,12 +248,13 @@ def main():
     # sample()
     start = time.time()
     meta = MOFDatasetMeta(position_supercell_threshold=0.4, position_variance=0.2)
+    # _test()
     # generate_grids(['PIYZAZ_clean', 'RIVDIL_clean', 'QUSCAJ_clean'] + ['PIYZAZ_clean'] * 100, meta)
     # generate_final('mof_dataset.pt', meta)
-    # generate_sample('real_mof_sample.p', meta, 8)
+    generate_sample('real_mof_sample.p', meta, 16)
     # d = MOFDataset.load('mof_dataset.pt')
     # print(len(d.mofs))
-    generate_final('_datasets/mof_dataset_2c.pt', meta)
+    # generate_final('_datasets/mof_dataset_2c.pt', meta)
     # check_atom_types()
 
     print(f"TIME: {round(time.time() - start, 2)}s")
